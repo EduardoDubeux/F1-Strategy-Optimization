@@ -1,90 +1,107 @@
+"""
+features.py - Engenharia de Features para Predição de Lap Times na F1
+Autor: Eduardo Sampaio Dubeux
+"""
+
 import pandas as pd
+import numpy as np
+from typing import Tuple
 
 
-# =============================
-# 🛞 DEGRADAÇÃO NÃO LINEAR
-# =============================
-
-def compute_tire_degradation(tyre_life, compound):
+def compute_tire_degradation(tyre_life: int, compound: str) -> float:
+    """Degradação calibrada para dados reais da F1"""
     if compound == "SOFT":
-        return 0.06 * tyre_life + 0.003 * (tyre_life ** 2)
+        base = 0.035
+        quadratic = 0.0018
     elif compound == "MEDIUM":
-        return 0.04 * tyre_life + 0.002 * (tyre_life ** 2)
+        base = 0.022
+        quadratic = 0.0010
     elif compound == "HARD":
-        return 0.025 * tyre_life + 0.001 * (tyre_life ** 2)
-    return 0
+        base = 0.015
+        quadratic = 0.0006
+    elif compound in ["INTERMEDIATE", "WET"]:
+        base = 0.060
+        quadratic = 0.004
+    else:
+        base = 0.025
+        quadratic = 0.001
+    
+    return base * tyre_life + quadratic * (tyre_life ** 2)
 
 
-# =============================
-# 🏁 CONTEXTO DE CORRIDA
-# =============================
-
-def add_race_context(df):
+def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # posição de largada (grid)
-    first_lap = df[df['LapNumber'] == 1]
-    grid_map = dict(zip(first_lap['Driver'], first_lap['Position']))
+    # ====================== FEATURES BÁSICAS ======================
+    if 'TyreLife' not in df.columns or df['TyreLife'].isnull().all():
+        df['TyreLife'] = df.groupby(['Driver', 'Stint']).cumcount() + 1
 
-    df['GridPosition'] = df['Driver'].map(grid_map)
-
-    return df
-
-
-# =============================
-# FEATURE ENGINEERING
-# =============================
-
-def build_features(df):
-    df = df.copy()
-
-    # contexto
-    df = add_race_context(df)
-
-    # TyreLife
-    if 'TyreLife' not in df.columns:
-        df['TyreLife'] = df.groupby(['Driver', 'Stint']).cumcount()
-
-    # StintLap
     df['StintLap'] = df.groupby(['Driver', 'Stint']).cumcount() + 1
 
-    # Degradação
+    # ====================== FEATURES DE CONTEXTO ======================
+    total_laps = df['LapNumber'].max()
+    df['LapProgress'] = df['LapNumber'] / total_laps
+    df['LapProgress_Squared'] = df['LapProgress'] ** 2
+
+    df['FreshTyre'] = (df['TyreLife'] == 1).astype(int)
+
+    # NOVA FEATURE - Pneu relativo à média da corrida
+    df['TyreLifeNorm'] = df['TyreLife'] / df['TyreLife'].max()
+
+    # ====================== DEGRADAÇÃO DOS PNEUS ======================
     df['TireDeg'] = df.apply(
-        lambda row: compute_tire_degradation(
-            row['TyreLife'],
-            row['Compound']
-        ),
+        lambda row: compute_tire_degradation(int(row['TyreLife']), str(row['Compound'])), 
         axis=1
     )
+    df['TireDeg_Squared'] = df['TireDeg'] ** 2
 
-    # Performance do piloto
-    df['DriverPace'] = df.groupby('Driver')['LapTime'].transform('mean')
+    compound_code = pd.Categorical(df['Compound']).codes
+    df['TyreLife_Compound'] = df['TyreLife'] * compound_code
 
-    # One-hot encoding
-    df = pd.get_dummies(df, columns=['Compound'])
+    # ====================== OUTRAS FEATURES ======================
+    df['LapNumber_Squared'] = df['LapNumber'] ** 2
+    df['PositionChange'] = df.groupby('Driver')['Position'].diff().fillna(0)
+
+    # ====================== ENCODING ======================
+    df = pd.get_dummies(df, columns=['Compound'], prefix='Compound', dtype=int)
 
     return df
 
 
-# =============================
-# PREPARAÇÃO PARA MODELOS
-# =============================
-
-def prepare_model_data(df):
-    features = [
+def prepare_model_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Prepara X e y SEM data leakage.
+    """
+    feature_cols = [
         'LapNumber',
+        'LapProgress',
+        'LapProgress_Squared',
+        'LapNumber_Squared',
         'TyreLife',
-        'Stint',
+        'TyreLifeNorm',
         'StintLap',
+        'FreshTyre',
         'TireDeg',
-        'GridPosition',
-        'DriverPace'
+        'TireDeg_Squared',
+        'TyreLife_Compound',
+        'PositionChange',
     ]
 
-    compound_cols = [col for col in df.columns if "Compound_" in col]
-    features.extend(compound_cols)
+    compound_cols = [col for col in df.columns if col.startswith('Compound_')]
+    feature_cols.extend(compound_cols)
 
-    X = df[features]
-    y = df['LapTime']
+    available_features = [col for col in feature_cols if col in df.columns]
+    
+    X = df[available_features].copy()
+    y = df['LapTime'].copy()
 
+    print(f"Features utilizadas ({len(available_features)}):")
+    print(available_features)
+    
     return X, y
+
+
+# Teste rápido
+if __name__ == "__main__":
+    print("✅ features.py carregado com sucesso!")
+    print("Funções: build_features() e prepare_model_data()")
