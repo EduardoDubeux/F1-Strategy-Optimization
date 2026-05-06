@@ -1,10 +1,6 @@
-"""
-simulator.py - Simulador calibrado para Bahrain 2023 (Max Verstappen)
-"""
-
 import pandas as pd
-import numpy as np
 import random
+from src.features import compute_tire_degradation
 
 
 def get_compound_features(compound: str):
@@ -63,13 +59,7 @@ def simulate_strategy(model, feature_columns, total_laps, pit_laps, grid_positio
         }
 
         # Degradação
-        tire_deg = 0.0
-        if current_compound == "SOFT":
-            tire_deg = 0.042 * tyre_life + 0.0028 * (tyre_life ** 2)
-        elif current_compound == "MEDIUM":
-            tire_deg = 0.027 * tyre_life + 0.0014 * (tyre_life ** 2)
-        elif current_compound == "HARD":
-            tire_deg = 0.018 * tyre_life + 0.0009 * (tyre_life ** 2)
+        tire_deg = compute_tire_degradation(tyre_life, current_compound)
 
         row['TireDeg'] = tire_deg
         row['TireDeg_Squared'] = tire_deg ** 2
