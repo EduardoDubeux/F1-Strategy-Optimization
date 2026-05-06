@@ -1,62 +1,89 @@
-import os
-import pandas as pd
+from src.data_loader import load_and_process
+from src.features import build_features, prepare_model_data
+from src.models import run_models
+from src.simulator import run_simulation
+from src.visualization import plot_all, print_f1_style_output
 
-from src.feature_engineering import create_features
-from src.strategy_model import train_model
-from src.strategy_simulator import find_best_strategy
-from src.visualization import plot_strategy_results, plot_tire_degradation
 
-# IMPORTANTE: importar função de dataset
-from data_loader import build_dataset  # ou ajuste conforme seu arquivo
+def main():
+    # =============================
+    # CONFIGURAÇÕES
+    # =============================
+    YEAR = 2023
+    RACE = 'Bahrain'
+    SESSION = 'R'
+    DRIVER = "VER"  # ex: VER, HAM, ALO
 
-DATA_PATH = 'data/processed/lap_data.csv'
+    print("\nIniciando pipeline...\n")
 
-# =========================
-# GARANTIR QUE DATASET EXISTE
-# =========================
+    # =============================
+    # 1. CARREGAR DADOS
+    # =============================
+    df_raw = load_and_process(YEAR, RACE, SESSION)
 
-if not os.path.exists(DATA_PATH):
-    print("Dataset não encontrado. Gerando agora...\n")
-    dataset = build_dataset()
-    os.makedirs('data/processed', exist_ok=True)
-    dataset.to_csv(DATA_PATH, index=False)
-    print("Dataset criado com sucesso!\n")
+    # filtrar piloto
+    df_raw = df_raw[df_raw['Driver'] == DRIVER].copy()
 
-# =========================
-# CARREGAR DATASET
-# =========================
+    if df_raw.empty:
+        print(f"Erro: piloto {DRIVER} não encontrado nos dados.")
+        return
 
-df = pd.read_csv(DATA_PATH)
+    # nome completo e equipe
+    driver_name = df_raw['FullName'].iloc[0]
+    team = df_raw['Team'].iloc[0]
 
-# =========================
-# FEATURE ENGINEERING
-# =========================
+    # posição de largada
+    grid_position = int(df_raw['Position'].iloc[0])
 
-df, feature_cols, target_col = create_features(df)
+    print(f"Analisando piloto: {driver_name} ({team})\n")
 
-# =========================
-# TREINAR MODELO
-# =========================
+    # =============================
+    # 2. FEATURE ENGINEERING
+    # =============================
+    df = build_features(df_raw.copy())
 
-model = train_model(df, feature_cols, target_col)
+    # =============================
+    # 3. MODELAGEM
+    # =============================
+    X, y = prepare_model_data(df)
 
-# =========================
-# SIMULAR ESTRATÉGIAS
-# =========================
+    best_name, best_model, results = run_models(X, y)
 
-best, results = find_best_strategy(model, feature_cols, total_laps=70)
+    print(f"Melhor modelo selecionado: {best_name}\n")
 
-print("\n===== RESULTADOS =====")
+    # =============================
+    # 4. SIMULAÇÃO
+    # =============================
+    results_df, best_strategy = run_simulation(
+        best_model,
+        X.columns,
+        grid_position,
+        total_laps=57
+    )
 
-for strat, time in results:
-    print(f"Estratégia: {strat} -> Tempo: {time:.2f}s")
+    # =============================
+    # 5. OUTPUT ESTILO F1
+    # =============================
+    print_f1_style_output(
+        driver_name,
+        team,
+        RACE,
+        YEAR,
+        grid_position,
+        best_strategy,
+        results_df
+    )
 
-print("\n🏆 Melhor estratégia:")
-print(best)
+    # =============================
+    # 6. GRÁFICOS
+    # =============================
+    plot_all(
+        results_df,
+        best_strategy,
+        results,
+        df_raw
+    )
 
-# =========================
-# GRÁFICOS
-# =========================
 
-plot_strategy_results(results)
-plot_tire_degradation(df)
+if __name__ == "__main__":
+    main()
